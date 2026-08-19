@@ -1439,7 +1439,7 @@ catch (const Poco::Exception & e)
 }
 catch (const std::exception & e)
 {
-    finishWithException(key.query, data->entries, e);
+    finishWithException(key.query, data->entries, Exception(Exception::CreateFromSTDTag{}, e));
 }
 catch (...)
 {
