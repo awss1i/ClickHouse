@@ -1,6 +1,5 @@
 #include <Storages/MergeTree/Streaming/ReadingPlan/buildReadRoundPipeline.h>
 #include <Storages/MergeTree/Streaming/ReadingPlan/AlignStreams.h>
-#include <Storages/MergeTree/Streaming/ReadingPlan/StampPartitionWatermarks.h>
 #include <Storages/MergeTree/Streaming/ReadingPlan/StampPartitionCursors.h>
 #include <Storages/MergeTree/Streaming/PartitionsClassification.h>
 #include <Storages/MergeTree/Streaming/Cursors/CursorUtils.h>
@@ -23,7 +22,6 @@
 #include <QueryPipeline/printPipeline.h>
 
 #include <Processors/QueryPlan/Streaming/CalculateWatermarksStep.h>
-#include <Processors/QueryPlan/Streaming/RaiseWatermarksStep.h>
 #include <Processors/QueryPlan/BuildQueryPipelineSettings.h>
 #include <Processors/QueryPlan/ExpressionStep.h>
 #include <Processors/QueryPlan/FilterStep.h>
@@ -82,8 +80,8 @@ Names metadataStreamColumns(const StreamSettings & stream_settings, const Storag
 {
     Names columns{PartitionIdColumn::name, BlockNumberColumn::name, BlockOffsetColumn::name};
 
-    if (!std::ranges::contains(columns, stream_settings.watermark->column))
-        columns.push_back(stream_settings.watermark->column);
+    if (!std::ranges::contains(columns, stream_settings.watermark->time_attribute_column))
+        columns.push_back(stream_settings.watermark->time_attribute_column);
 
     const auto source_columns = collectWatermarkSourceColumns(stream_settings.watermark->expression, metadata->getColumns().getAllPhysical(), context);
     for (const auto & source_column : source_columns)
@@ -101,8 +99,8 @@ Names dataStreamColumns(Names columns, const StreamSettings & stream_settings, c
             columns.push_back(aux_name);
 
     if (stream_settings.watermark)
-        if (!std::ranges::contains(columns, stream_settings.watermark->column))
-            columns.push_back(stream_settings.watermark->column);
+        if (!std::ranges::contains(columns, stream_settings.watermark->time_attribute_column))
+            columns.push_back(stream_settings.watermark->time_attribute_column);
 
     if (prewhere_info)
     {
@@ -218,7 +216,7 @@ Pipe buildPartitionReadingPipeline(
     if (stream_settings.watermark)
     {
         ActionsDAG time_attribute_dag(plan->getCurrentHeader()->getColumnsWithTypeAndName());
-        const auto & alias_node = time_attribute_dag.addAlias(time_attribute_dag.findInOutputs(stream_settings.watermark->column), TimeAttributeColumn::name);
+        const auto & alias_node = time_attribute_dag.addAlias(time_attribute_dag.findInOutputs(stream_settings.watermark->time_attribute_column), TimeAttributeColumn::name);
         time_attribute_dag.getOutputs().push_back(&alias_node);
         plan->addStep(std::make_unique<ExpressionStep>(plan->getCurrentHeader(), std::move(time_attribute_dag)));
         plan->addStep(std::make_unique<StampPartitionCursorsStep>(plan->getCurrentHeader(), partition_id, stream_settings.unordered));
@@ -228,11 +226,9 @@ Pipe buildPartitionReadingPipeline(
         chassert(metadata_plan);
 
         metadata_plan->addStep(std::make_unique<StampPartitionCursorsStep>(metadata_plan->getCurrentHeader(), partition_id, stream_settings.unordered));
-        metadata_plan->addStep(std::make_unique<CalculateWatermarksStep>(metadata_plan->getCurrentHeader(), stream_settings.watermark, context));
-        metadata_plan->addStep(std::make_unique<RaiseWatermarksStep>(metadata_plan->getCurrentHeader(), state.getPartitionWatermark(partition_id)));
-        metadata_plan->addStep(std::make_unique<StampPartitionWatermarksStep>(metadata_plan->getCurrentHeader(), partition_id));
+        metadata_plan->addStep(std::make_unique<CalculateWatermarksStep>(metadata_plan->getCurrentHeader(), stream_settings.watermark, state.getPartitionWatermark(partition_id), context));
 
-        auto align_step = std::make_unique<AlignStreamsStep>(metadata_plan->getCurrentHeader(), plan->getCurrentHeader());
+        auto align_step = std::make_unique<AlignStreamsStep>(metadata_plan->getCurrentHeader(), plan->getCurrentHeader(), partition_id);
 
         std::vector<QueryPlanPtr> plans;
         plans.push_back(std::move(metadata_plan));
