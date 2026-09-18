@@ -10,7 +10,6 @@
 
 #include <base/defines.h>
 
-#include <optional>
 #include <queue>
 
 namespace DB
@@ -48,22 +47,18 @@ public:
 protected:
     void consume(Chunk chunk) override
     {
-        std::optional<Field> watermark;
         if (auto marker = chunk.getChunkInfos().get<WatermarkMarker>())
-            watermark = marker->watermark;
-
-        pending_chunks.push(std::move(chunk));
-
-        if (watermark)
         {
             auto partition_marker = std::make_shared<PartitionWatermarkInfo>();
             partition_marker->partition_id = partition_id;
-            partition_marker->watermark = std::move(*watermark);
+            partition_marker->watermark = marker->watermark;
 
             Chunk partition_marker_chunk(getOutputPort().getHeader().cloneEmptyColumns(), 0);
             partition_marker_chunk.getChunkInfos().add(std::move(partition_marker));
             pending_chunks.push(std::move(partition_marker_chunk));
         }
+
+        pending_chunks.push(std::move(chunk));
     }
 
     bool canGenerate() override
