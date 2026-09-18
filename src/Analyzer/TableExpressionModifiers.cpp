@@ -67,7 +67,7 @@ void TableExpressionModifiers::updateTreeHash(SipHash & hash_state) const
 
         if (stream_settings->watermark)
         {
-            hash_state.update(stream_settings->watermark->column);
+            hash_state.update(stream_settings->watermark->time_attribute_column);
             hash_state.update(stream_settings->watermark->idle_timeout.count());
             stream_settings->watermark->expression->updateTreeHash(hash_state, /*ignore_aliases=*/false);
         }
@@ -127,7 +127,7 @@ StorageMetadataPtr extendMetadataWithModifiers(const StorageMetadataPtr & metada
     if (!stream_settings->watermark)
         return metadata;
 
-    auto column = metadata->getColumns().tryGetColumn(GetColumnsOptions::AllPhysical, stream_settings->watermark->column);
+    auto column = metadata->getColumns().tryGetColumn(GetColumnsOptions::AllPhysical, stream_settings->watermark->time_attribute_column);
     if (!column)
         return metadata;
 
