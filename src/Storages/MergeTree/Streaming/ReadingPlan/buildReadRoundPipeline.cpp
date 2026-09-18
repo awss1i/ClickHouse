@@ -309,7 +309,7 @@ std::optional<ReadRoundPipeline> buildReadRoundPipeline(
     result.pipe = Pipe::unitePipes(std::move(pipes));
 
     if (stream_settings.watermark)
-        result.pipe.calibrateWatermarks(1);
+        result.pipe.calibrateWatermarks(1, state.getGlobalWatermark());
     else
         result.pipe.resize(1);
 
