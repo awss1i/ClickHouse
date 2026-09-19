@@ -108,7 +108,7 @@ class AlignStreamsProcessor final : public IProcessor
     {
         const auto & front = held_metadata.front();
         if (held_data.has_value())
-            return held_data->first > front.last;
+            return front.last < held_data->last;
 
         return data_input.isFinished() || data_progress > front.last;
     }
@@ -132,10 +132,14 @@ class AlignStreamsProcessor final : public IProcessor
 
     void releaseMetadata()
     {
-        const auto & front = held_metadata.front();
-        const auto watermark = watermarkAt(front.chunk, front.chunk.getNumRows() - 1, metadata_watermark_pos);
+        const auto front = std::move(held_metadata.front());
         held_metadata.pop_front();
 
+        const bool overlaps_with_data = held_data.has_value() && held_data->first <= front.last;
+        if (overlaps_with_data)
+            return;
+
+        const auto watermark = watermarkAt(front.chunk, front.chunk.getNumRows() - 1, metadata_watermark_pos);
         if (watermark <= last_watermark)
             return;
 
