@@ -71,7 +71,7 @@ void formatWatermark(
     IAST::FormatState & state,
     IAST::FormatStateStacked frame)
 {
-    wb << "FOR " << backQuoteIfNeed(node.column) << " AS ";
+    wb << "FOR " << backQuoteIfNeed(node.time_attribute_column) << " AS ";
     node.expression->format(wb, format_settings, state, frame);
 
     if (node.idle_timeout.count() > 0)
