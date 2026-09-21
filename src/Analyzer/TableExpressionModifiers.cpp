@@ -3,7 +3,8 @@
 #include <Common/SipHash.h>
 
 #include <Core/Streaming/CursorTree.h>
-#include <Core/Streaming/StreamingVirtualColumns.h>
+
+#include <Interpreters/Streaming/Utils.h>
 
 #include <Storages/StorageInMemoryMetadata.h>
 
@@ -120,20 +121,10 @@ String TableExpressionModifiers::formatForErrorMessage() const
 
 StorageMetadataPtr extendMetadataWithModifiers(const StorageMetadataPtr & metadata, const TableExpressionModifiers & modifiers)
 {
-    if (!modifiers.hasStream())
-        return metadata;
+    if (modifiers.hasStream())
+        return extendMetadataWithStream(metadata, *modifiers.getStreamSettings());
 
-    const auto & stream_settings = modifiers.getStreamSettings();
-    if (!stream_settings->watermark)
-        return metadata;
-
-    auto column = metadata->getColumns().tryGetColumn(GetColumnsOptions::AllPhysical, stream_settings->watermark->time_attribute_column);
-    if (!column)
-        return metadata;
-
-    auto extended = std::make_shared<StorageInMemoryMetadata>(*metadata);
-    extended->virtuals.addEphemeral(std::string(TimeAttributeColumn::name), column->type, "Event-time value of the current row.", VirtualsMaterializationPlace::Streaming);
-    return extended;
+    return metadata;
 }
 
 }

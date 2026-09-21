@@ -5,6 +5,8 @@
 
 #include <Core/Streaming/Settings.h>
 
+#include <optional>
+
 namespace DB
 {
 
@@ -12,11 +14,11 @@ struct ReadRoundContext
 {
     const MergeTreeData & storage;
     const SelectQueryInfo query_info;
-    const PrewhereInfoPtr prewhere_info;
-    const FilterDAGInfoPtr row_level_filter;
     const StreamSettings stream_settings;
+    const std::optional<FilterDAGInfo> row_level_filter;
+    const std::optional<FilterDAGInfo> prewhere_filter;
     const ContextPtr context;
-    const Names user_requested_columns;
+    const Names columns_to_read;
     const size_t requested_num_streams;
     const UInt64 max_block_size;
     const SharedHeader output_header;

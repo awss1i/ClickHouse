@@ -5,7 +5,6 @@
 #include <Storages/MergeTree/Streaming/Cursors/CursorUtils.h>
 #include <Storages/MergeTree/MergeTreeDataSelectExecutor.h>
 #include <Storages/MergeTree/MergeTreeVirtualColumns.h>
-#include <Storages/ProjectionsDescription.h>
 #include <Storages/StorageInMemoryMetadata.h>
 #include <Storages/StorageSnapshot.h>
 
@@ -33,7 +32,6 @@
 
 #include <Core/Block.h>
 #include <Core/SortDescription.h>
-#include <Core/Streaming/StreamingVirtualColumns.h>
 
 #include <algorithm>
 #include <memory>
@@ -43,37 +41,6 @@ namespace DB
 
 namespace
 {
-
-const ProjectionDescription * chooseCommitOrderProjection(const StorageInMemoryMetadata & metadata, const Names & columns)
-{
-    for (const auto & projection : metadata.projections)
-    {
-        if (projection.type != ProjectionDescription::Type::Normal)
-            continue;
-
-        const auto sorting_key = projection.metadata->getSortingKeyColumns();
-        if (sorting_key.size() < 2 || sorting_key[0] != BlockNumberColumn::name || sorting_key[1] != BlockOffsetColumn::name)
-            continue;
-
-        auto has_column = [&](const String & column) { return projection.sample_block.findColumnOrSubcolumnByName(column).has_value(); };
-        if (std::ranges::all_of(columns, has_column))
-            return &projection;
-    }
-
-    return nullptr;
-}
-
-QueryPlanOptimizationSettings makeReadRoundOptimizationSettings(const ContextPtr & context, const StorageInMemoryMetadata & metadata, const Names & columns_to_read)
-{
-    QueryPlanOptimizationSettings settings(context);
-    if (const auto * projection = chooseCommitOrderProjection(metadata, columns_to_read))
-    {
-        settings.prefer_use_projection = true;
-        settings.preferred_projection_name = projection->name;
-    }
-
-    return settings;
-}
 
 /// Commit-order key + everything the watermark needs.
 Names metadataStreamColumns(const StreamSettings & stream_settings, const StorageMetadataPtr & metadata, const ContextPtr & context)
@@ -87,36 +54,6 @@ Names metadataStreamColumns(const StreamSettings & stream_settings, const Storag
     for (const auto & source_column : source_columns)
         if (!std::ranges::contains(columns, source_column))
             columns.push_back(source_column);
-
-    return columns;
-}
-
-/// User-requested columns + the commit-order key + watermark column + prewhere inputs + row filter inputs.
-Names dataStreamColumns(Names columns, const StreamSettings & stream_settings, const PrewhereInfoPtr & prewhere_info, const FilterDAGInfoPtr & row_level_filter)
-{
-    for (const auto & aux_name : {PartitionIdColumn::name, BlockNumberColumn::name, BlockOffsetColumn::name})
-        if (!std::ranges::contains(columns, aux_name))
-            columns.push_back(aux_name);
-
-    if (stream_settings.watermark)
-        if (!std::ranges::contains(columns, stream_settings.watermark->time_attribute_column))
-            columns.push_back(stream_settings.watermark->time_attribute_column);
-
-    if (prewhere_info)
-    {
-        const auto source_columns = prewhere_info->prewhere_actions.getRequiredColumnsNames();
-        for (const auto & source_column : source_columns)
-            if (!std::ranges::contains(columns, source_column))
-                columns.push_back(source_column);
-    }
-
-    if (row_level_filter)
-    {
-        const auto source_columns = row_level_filter->actions.getRequiredColumnsNames();
-        for (const auto & source_column : source_columns)
-            if (!std::ranges::contains(columns, source_column))
-                columns.push_back(source_column);
-    }
 
     return columns;
 }
@@ -183,44 +120,21 @@ Pipe buildPartitionReadingPipeline(
 {
     const auto & stream_settings = reading_context.stream_settings;
     const auto & context = reading_context.context;
-    const auto & prewhere_info = reading_context.prewhere_info;
-    const auto & row_level_filter = reading_context.row_level_filter;
     const auto & output_header = reading_context.output_header;
 
-    const auto columns_to_read = dataStreamColumns(reading_context.user_requested_columns, stream_settings, prewhere_info, row_level_filter);
-    auto plan = buildPartitionCommitOrderReadPlan(reading_context, state, partition_id, safe_block_number, storage_snapshot, columns_to_read);
+    auto plan = buildPartitionCommitOrderReadPlan(reading_context, state, partition_id, safe_block_number, storage_snapshot, reading_context.columns_to_read);
     if (!plan)
         return {};
 
-    /// Add row policy filter built from the outer query analysis.
-    if (row_level_filter)
-    {
-        plan->addStep(std::make_unique<FilterStep>(
-            plan->getCurrentHeader(),
-            row_level_filter->actions.clone(),
-            row_level_filter->column_name,
-            row_level_filter->do_remove_column));
-    }
+    if (const auto & filter = reading_context.row_level_filter)
+        plan->addStep(std::make_unique<FilterStep>(plan->getCurrentHeader(), filter->actions.clone(), filter->column_name, filter->do_remove_column));
 
-    /// Add filter built from the outer query analysis.
-    if (prewhere_info)
-    {
-        plan->addStep(std::make_unique<FilterStep>(
-            plan->getCurrentHeader(),
-            prewhere_info->prewhere_actions.clone(),
-            prewhere_info->prewhere_column_name,
-            prewhere_info->remove_prewhere_column));
-    }
+    if (const auto & filter = reading_context.prewhere_filter)
+        plan->addStep(std::make_unique<FilterStep>(plan->getCurrentHeader(), filter->actions.clone(), filter->column_name, filter->do_remove_column));
 
     /// The watermarks are computed on the unfiltered metadata stream and aligned with data stream.
     if (stream_settings.watermark)
     {
-        ActionsDAG time_attribute_dag(plan->getCurrentHeader()->getColumnsWithTypeAndName());
-        const auto & alias_node = time_attribute_dag.addAlias(time_attribute_dag.findInOutputs(stream_settings.watermark->time_attribute_column), TimeAttributeColumn::name);
-        time_attribute_dag.getOutputs().push_back(&alias_node);
-        plan->addStep(std::make_unique<ExpressionStep>(plan->getCurrentHeader(), std::move(time_attribute_dag)));
-        plan->addStep(std::make_unique<StampPartitionCursorsStep>(plan->getCurrentHeader(), partition_id, stream_settings.unordered));
-
         const auto metadata_columns = metadataStreamColumns(stream_settings, storage_snapshot->metadata, context);
         auto metadata_plan = buildPartitionCommitOrderReadPlan(reading_context, state, partition_id, safe_block_number, storage_snapshot, metadata_columns);
         chassert(metadata_plan);
@@ -269,11 +183,11 @@ std::optional<ReadRoundPipeline> buildReadRoundPipeline(
     const auto & stream_settings = reading_context.stream_settings;
     const auto & context = reading_context.context;
     const auto & output_header = reading_context.output_header;
-    const auto metadata = reading_context.storage.getInMemoryMetadataPtr(context, /*bypass_metadata_cache=*/true);
-    const auto storage_snapshot = reading_context.storage.getStorageSnapshot(metadata, context);
+    const auto storage_metadata = reading_context.storage.getInMemoryMetadataPtr(context, /*bypass_metadata_cache=*/true);
+    const auto streaming_metadata = extendMetadataWithStream(storage_metadata, stream_settings);
+    const auto storage_snapshot = reading_context.storage.getStorageSnapshot(streaming_metadata, context);
     const auto classification = classifyPartitions(state, safe_block_numbers, stream_settings);
-    const auto columns_to_read = dataStreamColumns(reading_context.user_requested_columns, stream_settings, reading_context.prewhere_info, reading_context.row_level_filter);
-    const auto opt_settings = makeReadRoundOptimizationSettings(context, *metadata, columns_to_read);
+    const QueryPlanOptimizationSettings opt_settings(context);
 
     ReadRoundPipeline result;
     Pipes pipes;
