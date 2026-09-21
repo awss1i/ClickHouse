@@ -206,7 +206,7 @@ class AlignStreamsProcessor final : public IProcessor
     }
 
 public:
-    AlignStreamsProcessor(SharedHeader metadata_header, SharedHeader data_header, String partition_id_)
+    AlignStreamsProcessor(SharedHeader metadata_header, SharedHeader data_header, String partition_id_, Field initial_watermark_)
         : IProcessor(buildInputPorts(metadata_header, data_header), buildOutputPorts(data_header))
         , partition_id(std::move(partition_id_))
         , metadata_block_number_pos(metadata_header->getPositionByName(BlockNumberColumn::name))
@@ -215,7 +215,10 @@ public:
         , metadata_input(inputs.front())
         , data_input(inputs.back())
         , output(outputs.front())
+        , last_watermark(std::move(initial_watermark_))
     {
+        if (!last_watermark.isNull())
+            ready_chunks.push(WatermarkMarker::create(output.getHeader(), last_watermark));
     }
 
     String getName() const override { return "AlignStreams"; }
@@ -301,8 +304,9 @@ private:
 
 }
 
-AlignStreamsStep::AlignStreamsStep(SharedHeader metadata_header_, SharedHeader data_header_, String partition_id_)
+AlignStreamsStep::AlignStreamsStep(SharedHeader metadata_header_, SharedHeader data_header_, String partition_id_, Field initial_watermark_)
     : partition_id(std::move(partition_id_))
+    , initial_watermark(std::move(initial_watermark_))
 {
     updateInputHeaders({std::move(metadata_header_), std::move(data_header_)});
 }
@@ -320,7 +324,7 @@ QueryPipelineBuilderPtr AlignStreamsStep::updatePipeline(QueryPipelineBuilders p
     if (pipelines[0]->getNumStreams() != 1 || pipelines[1]->getNumStreams() != 1)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "AlignStreams requires single-stream inputs, got {} and {}", pipelines[0]->getNumStreams(), pipelines[1]->getNumStreams());
 
-    auto processor = std::make_shared<AlignStreamsProcessor>(input_headers.front(), input_headers.back(), partition_id);
+    auto processor = std::make_shared<AlignStreamsProcessor>(input_headers.front(), input_headers.back(), partition_id, initial_watermark);
     return QueryPipelineBuilder::mergePipelines(std::move(pipelines[0]), std::move(pipelines[1]), std::move(processor), &processors);
 }
 

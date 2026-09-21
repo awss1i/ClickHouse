@@ -21,7 +21,7 @@ class AlignStreamsStep : public IQueryPlanStep
     void updateOutputHeader() override;
 
 public:
-    AlignStreamsStep(SharedHeader metadata_header_, SharedHeader data_header_, String partition_id_);
+    AlignStreamsStep(SharedHeader metadata_header_, SharedHeader data_header_, String partition_id_, Field initial_watermark_);
 
     String getName() const override { return "AlignStreams"; }
 
@@ -30,6 +30,7 @@ public:
 
 private:
     const String partition_id;
+    const Field initial_watermark;
 };
 
 }

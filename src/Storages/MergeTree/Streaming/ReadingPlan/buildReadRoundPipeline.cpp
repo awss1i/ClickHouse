@@ -142,7 +142,7 @@ Pipe buildPartitionReadingPipeline(
         metadata_plan->addStep(std::make_unique<StampPartitionCursorsStep>(metadata_plan->getCurrentHeader(), partition_id, stream_settings.unordered));
         metadata_plan->addStep(std::make_unique<CalculateWatermarksStep>(metadata_plan->getCurrentHeader(), stream_settings.watermark, state.getPartitionWatermark(partition_id), context));
 
-        auto align_step = std::make_unique<AlignStreamsStep>(metadata_plan->getCurrentHeader(), plan->getCurrentHeader(), partition_id);
+        auto align_step = std::make_unique<AlignStreamsStep>(metadata_plan->getCurrentHeader(), plan->getCurrentHeader(), partition_id, state.getPartitionWatermark(partition_id));
 
         std::vector<QueryPlanPtr> plans;
         plans.push_back(std::move(metadata_plan));
