@@ -192,17 +192,15 @@ class AlignStreamsProcessor final : public IProcessor
 
     void consumeMetadataChunk(Chunk chunk)
     {
-        if (auto info = chunk.getChunkInfos().extract<PartitionCursorInfo>())
-        {
-            metadata_progress = info->last;
-            held_metadata.push_back(HeldChunk{std::move(chunk), info->first, info->last});
-        }
+        const auto cursor_info = chunk.getChunkInfos().getSafe<PartitionCursorInfo>();
+        metadata_progress = cursor_info->last;
+        held_metadata.push_back(HeldChunk{std::move(chunk), cursor_info->first, cursor_info->last});
     }
 
     void consumeDataChunk(Chunk chunk)
     {
-        if (auto info = chunk.getChunkInfos().get<PartitionCursorInfo>())
-            held_data = HeldChunk{std::move(chunk), info->first, info->last};
+        const auto cursor_info = chunk.getChunkInfos().getSafe<PartitionCursorInfo>();
+        held_data = HeldChunk{std::move(chunk), cursor_info->first, cursor_info->last};
     }
 
 public:
