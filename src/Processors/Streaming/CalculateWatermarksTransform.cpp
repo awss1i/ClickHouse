@@ -31,7 +31,7 @@ namespace
 {
 
 template <typename ColumnType>
-ColumnPtr calculatePrefixMaxTyped(const IColumn & column, const Field & previous_watermark)
+ColumnPtr calculateWatermarkColumnTyped(const IColumn & column, const Field & previous_watermark)
 {
     using ValueType = typename ColumnType::ValueType;
 
@@ -58,18 +58,18 @@ ColumnPtr calculatePrefixMaxTyped(const IColumn & column, const Field & previous
     return result_column;
 }
 
-ColumnPtr calculatePrefixMax(const IDataType & type, const IColumn & column, const Field & previous_watermark)
+ColumnPtr calculateWatermarkColumn(const IDataType & type, const IColumn & column, const Field & previous_watermark)
 {
     switch (type.getTypeId())
     {
         case TypeIndex::Date:
-            return calculatePrefixMaxTyped<ColumnUInt16>(column, previous_watermark);
+            return calculateWatermarkColumnTyped<ColumnUInt16>(column, previous_watermark);
         case TypeIndex::Date32:
-            return calculatePrefixMaxTyped<ColumnInt32>(column, previous_watermark);
+            return calculateWatermarkColumnTyped<ColumnInt32>(column, previous_watermark);
         case TypeIndex::DateTime:
-            return calculatePrefixMaxTyped<ColumnUInt32>(column, previous_watermark);
+            return calculateWatermarkColumnTyped<ColumnUInt32>(column, previous_watermark);
         case TypeIndex::DateTime64:
-            return calculatePrefixMaxTyped<ColumnDecimal<DateTime64>>(column, previous_watermark);
+            return calculateWatermarkColumnTyped<ColumnDecimal<DateTime64>>(column, previous_watermark);
         default:
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Unexpected watermark type {}", type.getName());
     }
@@ -103,7 +103,7 @@ void CalculateWatermarksTransform::transform(Chunk & chunk)
     watermark_expression->execute(block, num_rows);
 
     const auto & result = block.getByName(result_name);
-    auto watermark_column = calculatePrefixMax(*result.type, *result.column->convertToFullColumnIfConst()->convertToFullColumnIfSparse(), watermark);
+    auto watermark_column = calculateWatermarkColumn(*result.type, *result.column->convertToFullColumnIfConst()->convertToFullColumnIfSparse(), watermark);
     watermark_column->get(num_rows - 1, watermark);
 
     chunk.addColumn(std::move(watermark_column));
